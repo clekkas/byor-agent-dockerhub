@@ -1,19 +1,28 @@
-name: Deploy hosted agent (Foundry, anonymous Docker Hub pull)
+name: Build, push, and deploy hosted agent (Foundry, anonymous Docker Hub pull)
 
-# This workflow focuses on the Foundry deployment step: it takes an already-published image
-# digest on Docker Hub and deploys it as a Foundry hosted agent via Terraform/AzAPI, with NO
-# registry connection and NO OIDC token exchange configured. That omission is the entire proof
-# point of this repo -- see infra/hosted-agent/main.tf.
-#
-# Image build/push to Docker Hub is a separate, manual step (see README) since the proof here is
-# about the Foundry-side pull mechanism, not the image publishing pipeline.
+# Proves a Microsoft Foundry hosted agent can pull its container image from a PUBLIC Docker Hub
+# repository with NO Foundry registry connection and NO OIDC token exchange configured -- see
+# infra/hosted-agent/main.tf, whose container_configuration block omits registry_connection_id
+# entirely. Both the image build/push and the Foundry deploy run on GitHub-hosted runners, so
+# there is no dependency on any local machine's network/Docker setup.
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - app.py
+      - knowledge/**
+      - requirements.txt
+      - Dockerfile
+      - infra/hosted-agent/**
+      - scripts/test-hosted-agent.py
+      - .github/workflows/deploy-agent.yml
   workflow_dispatch:
     inputs:
       image_digest:
-        description: "Full Docker Hub image reference with digest, e.g. docker.io/clekkas/byor-agent-dockerhub@sha256:..."
-        required: true
+        description: "Optional: deploy an existing Docker Hub image digest instead of building (leave empty to build)"
+        required: false
+        default: ""
 
 permissions:
   id-token: write
@@ -32,10 +41,76 @@ env:
   STATE_STORAGE_ACCOUNT: byorproof76ot9wkv
   STATE_CONTAINER: dockerhub-agent-tfstate
   STATE_KEY: hosted-agent/proof.tfstate
+  DOCKERHUB_NAMESPACE: clekkas
+  IMAGE_NAME: byor-agent-dockerhub
 
 jobs:
+  build:
+    name: Build and push image to Docker Hub
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.digest.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use provided digest instead of building
+        if: inputs.image_digest != ''
+        id: provided
+        run: echo "image=${{ inputs.image_digest }}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        if: inputs.image_digest == ''
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker Hub login
+        if: inputs.image_digest == ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_NAMESPACE }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push (linux/amd64)
+        if: inputs.image_digest == ''
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: docker.io/${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+
+      - name: Smoke test pushed image
+        if: inputs.image_digest == ''
+        run: |
+          image="docker.io/${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}"
+          cid=$(docker run -d --rm -p 8088:8088 "$image")
+          trap 'docker stop "$cid" >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:8088/readiness >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS http://localhost:8088/readiness
+          curl -fsS -X POST http://localhost:8088/responses \
+            -H 'Content-Type: application/json' \
+            -d '{"input":"Foundry image smoke test"}' | tee /tmp/resp.json
+          python3 -c 'import json; r=json.load(open("/tmp/resp.json")); assert r["status"] == "completed" and r["output_text"], r'
+          docker stop "$cid" >/dev/null
+
+      - name: Resolve immutable image digest
+        id: digest
+        run: |
+          if [ -n "${{ inputs.image_digest }}" ]; then
+            echo "image=${{ inputs.image_digest }}" >> "$GITHUB_OUTPUT"
+            echo "Using provided digest: ${{ inputs.image_digest }}"
+          else
+            image="docker.io/${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}"
+            echo "image=$image" >> "$GITHUB_OUTPUT"
+            echo "Built and pushed: $image"
+          fi
+
   deploy:
     name: Terraform agent deploy (no registry connection)
+    needs: build
     runs-on: ubuntu-latest
     env:
       ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
@@ -45,7 +120,7 @@ jobs:
       TF_IN_AUTOMATION: "true"
       TF_VAR_project_endpoint: ${{ env.FOUNDRY_PROJECT_ENDPOINT }}
       TF_VAR_agent_name: dockerhub-anon-agent
-      TF_VAR_image_uri: ${{ inputs.image_digest }}
+      TF_VAR_image_uri: ${{ needs.build.outputs.image }}
       TF_VAR_model_deployment_name: ""
       TF_VAR_cpu: "0.5"
       TF_VAR_memory: "1Gi"

@@ -14,12 +14,28 @@ registry, anonymous).
 |---|---|
 | `app.py` | Same minimal Foundry hosted-agent app as `byor-agent` (Responses protocol + health probes). Registry-agnostic. |
 | `Dockerfile` | `linux/amd64`, python:3.12-slim, non-root uid 10001, listens on `$PORT` (8088) |
-| `build-and-push.sh` | Build → local smoke test → push to Docker Hub |
+| `build-and-push.sh` | Optional manual/local alternative: build → local smoke test → push to Docker Hub |
 | `infra/hosted-agent/` | Terraform (AzAPI data-plane) for the logical hosted agent. `container_configuration` has **no `registry_connection_id` key at all** — the proof point. |
 | `scripts/test-hosted-agent.py` | Waits for the new version to become active, verifies its image, and invokes its Responses endpoint |
-| `.github/workflows/deploy-agent.yml` | `workflow_dispatch`-only: takes an image digest, deploys via Terraform, smoke-tests |
+| `.github/workflows/deploy-agent.yml` | Two jobs: **build** (Docker Buildx → push to Docker Hub → smoke test, on GitHub-hosted runners) → **deploy** (Terraform apply, smoke test the hosted agent). Runs automatically on push to `main`, or manually via `workflow_dispatch` (optionally pointing at an already-published digest instead of building). |
 
-## Run it
+## Run it (fully automated — no local Docker needed)
+
+Push to `main` (or trigger `workflow_dispatch` with an empty `image_digest`), and GitHub Actions
+will build the image on its own runners, push it to `docker.io/clekkas/byor-agent-dockerhub`,
+then deploy it to Foundry — all without touching any local machine. This is the preferred path
+for environments where local Docker builds are restricted (e.g. IT-managed network policies that
+block cross-architecture emulation).
+
+**Important:** make sure the repository `clekkas/byor-agent-dockerhub` is set to **Public** on
+Docker Hub (Repository settings → Visibility) once the first push creates it — this is what makes
+anonymous pulls possible at all. A private repo would require Docker Hub credentials for pulls,
+defeating the point of this proof. (Push itself always requires the `DOCKERHUB_TOKEN` secret;
+only *pull* needs to be anonymous.)
+
+## Manual/local alternative
+
+If you'd rather build locally:
 
 ```bash
 export DOCKERHUB_NAMESPACE="clekkas"
@@ -29,22 +45,12 @@ docker login   # your Docker Hub credentials
 ./build-and-push.sh
 ```
 
-The script prints the pushed image's immutable digest, e.g.:
-
-```
-docker.io/clekkas/byor-agent-dockerhub@sha256:<64 hex chars>
-```
-
-**Important:** make sure the repository `clekkas/byor-agent-dockerhub` is set to **Public** on
-Docker Hub (Repository settings → Visibility) — this is what makes anonymous pulls possible at
-all. A private repo would require Docker Hub credentials, defeating the point of this proof.
+Then trigger the workflow manually with that image's digest as the `image_digest` input, which
+skips the build job entirely and goes straight to the Foundry deploy.
 
 ## Deploy to Foundry (the actual proof)
 
-In GitHub: **Actions → "Deploy hosted agent (Foundry, anonymous Docker Hub pull)" → Run workflow**,
-paste the digest from the previous step as `image_digest`.
-
-The workflow:
+Whichever path produced an image, the **deploy** job:
 1. Logs into Azure via OIDC (no stored secret — federated credential on the shared deploy app).
 2. Runs `terraform apply` against `infra/hosted-agent/`, whose `main.tf` **omits**
    `registry_connection_id` entirely.
