@@ -38,7 +38,7 @@ env:
   AZURE_SUBSCRIPTION_ID: 0e494a0c-e2e6-41f8-8a50-6064d842225e
   AZURE_CLIENT_ID: a24802c6-4286-4572-8733-377837098a2d
   STATE_RESOURCE_GROUP: kaiser-foundry-rg
-  STATE_STORAGE_ACCOUNT: byorproof76ot9wkv
+  STATE_STORAGE_ACCOUNT: tfstateb173d2d85c34
   STATE_CONTAINER: dockerhub-agent-tfstate
   STATE_KEY: hosted-agent/proof.tfstate
   DOCKERHUB_NAMESPACE: clekkas
@@ -111,7 +111,7 @@ jobs:
   deploy:
     name: Terraform agent deploy (no registry connection)
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, byor-private]
     env:
       ARM_CLIENT_ID: a24802c6-4286-4572-8733-377837098a2d
       ARM_TENANT_ID: 16b3c013-d300-468d-ac64-7eda0820b6d3
