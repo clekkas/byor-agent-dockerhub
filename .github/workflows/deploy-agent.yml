@@ -113,12 +113,12 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     env:
-      ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
-      ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
-      ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
+      ARM_CLIENT_ID: a24802c6-4286-4572-8733-377837098a2d
+      ARM_TENANT_ID: 16b3c013-d300-468d-ac64-7eda0820b6d3
+      ARM_SUBSCRIPTION_ID: 0e494a0c-e2e6-41f8-8a50-6064d842225e
       ARM_USE_OIDC: "true"
       TF_IN_AUTOMATION: "true"
-      TF_VAR_project_endpoint: ${{ env.FOUNDRY_PROJECT_ENDPOINT }}
+      TF_VAR_project_endpoint: https://kaiser-foundry-resource.services.ai.azure.com/api/projects/workshop-demo-project
       TF_VAR_agent_name: dockerhub-anon-agent
       TF_VAR_image_uri: ${{ needs.build.outputs.image }}
       TF_VAR_model_deployment_name: ""
@@ -136,9 +136,9 @@ jobs:
       - name: Azure login
         uses: azure/login@v2
         with:
-          client-id: ${{ env.AZURE_CLIENT_ID }}
-          tenant-id: ${{ env.AZURE_TENANT_ID }}
-          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          client-id: a24802c6-4286-4572-8733-377837098a2d
+          tenant-id: 16b3c013-d300-468d-ac64-7eda0820b6d3
+          subscription-id: 0e494a0c-e2e6-41f8-8a50-6064d842225e
 
       - name: Validate inputs
         run: |
