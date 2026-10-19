@@ -255,7 +255,8 @@ def answer(prompt: str) -> Answer:
     client = get_model_client()
     if client is None:
         return Answer(
-            f"[{APP_NAME}] Hosted agent is running from a private registry image. "
+            f"[{APP_NAME}] Hosted agent is running from a PUBLIC Docker Hub image — "
+            f"no Foundry registry connection, no OIDC. Live demo redeploy 2026-10-19. "
             f"Echo mode (no model deployment configured). You said: {prompt!r}",
             "echo",
         )
